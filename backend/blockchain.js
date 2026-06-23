@@ -1,25 +1,47 @@
 const { ethers } = require("ethers");
 
-const contractAddress = require("./contractAddress.json");
+const abi = require("./ExamPaperSecurityABI.json");
 
-const artifact = require("../artifacts/contracts/ExamPaperSecurity.sol/ExamPaperSecurity.json");
+const getContractAddress = () => {
+  if (process.env.CONTRACT_ADDRESS) {
+    return process.env.CONTRACT_ADDRESS;
+  }
 
-const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
+  try {
+    const savedAddress = require("./contractAddress.json");
+    return savedAddress.address;
+  } catch (error) {
+    return null;
+  }
+};
 
-const privateKey =
-  "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+const getContract = () => {
+  const rpcUrl = process.env.BLOCKCHAIN_RPC_URL;
+  const privateKey = process.env.BLOCKCHAIN_PRIVATE_KEY;
+  const contractAddress = getContractAddress();
 
-const wallet = new ethers.Wallet(privateKey, provider);
+  if (!rpcUrl) {
+    throw new Error("BLOCKCHAIN_RPC_URL missing");
+  }
 
-const contract = new ethers.Contract(
-  contractAddress.address,
-  artifact.abi,
-  wallet
-);
+  if (!privateKey) {
+    throw new Error("BLOCKCHAIN_PRIVATE_KEY missing");
+  }
+
+  if (!contractAddress) {
+    throw new Error("CONTRACT_ADDRESS missing");
+  }
+
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  const wallet = new ethers.Wallet(privateKey, provider);
+
+  return new ethers.Contract(contractAddress, abi, wallet);
+};
 
 const storeHashOnBlockchain = async (fileName, hash) => {
-  const tx = await contract.storePaper(fileName, hash);
+  const contract = getContract();
 
+  const tx = await contract.storePaper(fileName, hash);
   const receipt = await tx.wait();
 
   let paperId = null;
@@ -28,7 +50,7 @@ const storeHashOnBlockchain = async (fileName, hash) => {
     try {
       const parsedLog = contract.interface.parseLog(log);
 
-      if (parsedLog.name === "PaperStored") {
+      if (parsedLog && parsedLog.name === "PaperStored") {
         paperId = parsedLog.args.id.toString();
       }
     } catch (error) {}
@@ -36,17 +58,19 @@ const storeHashOnBlockchain = async (fileName, hash) => {
 
   return {
     transactionHash: tx.hash,
-    paperId: paperId
+    paperId: paperId,
+    blockchainStored: true
   };
 };
 
 const verifyHashOnBlockchain = async (paperId, hash) => {
+  const contract = getContract();
   const result = await contract.verifyPaper(paperId, hash);
-
   return result;
 };
 
 const getPaperFromBlockchain = async (paperId) => {
+  const contract = getContract();
   const paper = await contract.getPaper(paperId);
 
   return {
