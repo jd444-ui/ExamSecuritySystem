@@ -6,6 +6,7 @@ const API_URL =
 
 function App() {
   const [mode, setMode] = useState("login");
+
   const [token, setToken] = useState(localStorage.getItem("token") || "");
   const [role, setRole] = useState(localStorage.getItem("role") || "");
   const [userName, setUserName] = useState(localStorage.getItem("name") || "");
@@ -36,11 +37,14 @@ function App() {
 
   const [file, setFile] = useState(null);
   const [verifyFile, setVerifyFile] = useState(null);
+
   const [exams, setExams] = useState([]);
   const [logs, setLogs] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+
   const [uploadResult, setUploadResult] = useState(null);
   const [verifyResult, setVerifyResult] = useState(null);
+
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -50,15 +54,17 @@ function App() {
 
   const showMessage = (text) => {
     setMessage(text);
-    setTimeout(() => setMessage(""), 4000);
+    setTimeout(() => setMessage(""), 5000);
   };
 
-  const getExamId = (exam) => exam._id || exam.id;
+  const getExamId = (exam) => {
+    return exam?._id || exam?.id;
+  };
 
   const copyToClipboard = async (text) => {
     try {
       await navigator.clipboard.writeText(text || "");
-      showMessage("Copied");
+      showMessage("Copied successfully");
     } catch {
       showMessage("Copy failed");
     }
@@ -107,7 +113,7 @@ function App() {
 
       showMessage("Login successful");
     } catch (error) {
-      showMessage(error.message);
+      showMessage(error.message || "Login failed");
     } finally {
       setLoading(false);
     }
@@ -130,7 +136,7 @@ function App() {
       showMessage("Registration successful. Now login.");
       setMode("login");
     } catch (error) {
-      showMessage(error.message);
+      showMessage(error.message || "Registration failed");
     } finally {
       setLoading(false);
     }
@@ -153,17 +159,47 @@ function App() {
 
   const fetchExams = async () => {
     try {
-      const data = await apiJson(`${API_URL}/exams`, {
-        headers: authHeaders()
-      });
+      let data;
+
+      try {
+        data = await apiJson(`${API_URL}/exams`, {
+          headers: authHeaders()
+        });
+      } catch (error1) {
+        try {
+          data = await apiJson(`${API_URL}/exams/all`, {
+            headers: authHeaders()
+          });
+        } catch (error2) {
+          data = await apiJson(`${API_URL}/exams/list`, {
+            headers: authHeaders()
+          });
+        }
+      }
+
+      console.log("EXAMS RESPONSE:", data);
+
+      let examList = [];
 
       if (Array.isArray(data)) {
-        setExams(data);
-      } else {
-        setExams(data.exams || data.data || []);
+        examList = data;
+      } else if (Array.isArray(data.exams)) {
+        examList = data.exams;
+      } else if (Array.isArray(data.examPapers)) {
+        examList = data.examPapers;
+      } else if (Array.isArray(data.papers)) {
+        examList = data.papers;
+      } else if (Array.isArray(data.data)) {
+        examList = data.data;
+      } else if (data.exam) {
+        examList = [data.exam];
       }
+
+      setExams(examList);
     } catch (error) {
-      showMessage(error.message);
+      console.log("FETCH EXAMS ERROR:", error);
+      showMessage(error.message || "Failed to fetch exam papers");
+      setExams([]);
     }
   };
 
@@ -175,8 +211,12 @@ function App() {
 
       if (Array.isArray(data)) {
         setLogs(data);
+      } else if (Array.isArray(data.logs)) {
+        setLogs(data.logs);
+      } else if (Array.isArray(data.data)) {
+        setLogs(data.data);
       } else {
-        setLogs(data.logs || data.data || []);
+        setLogs([]);
       }
     } catch {
       setLogs([]);
@@ -250,15 +290,26 @@ function App() {
         throw new Error(data.message || data.error || "Upload failed");
       }
 
-      setUploadResult(data.exam || data.data || data);
+      const uploadedExam = data.exam || data.data || data;
+
+      setUploadResult(uploadedExam);
+
+      if (uploadedExam && (uploadedExam._id || uploadedExam.id)) {
+        setExams((old) => [uploadedExam, ...old]);
+      }
+
       showMessage("Exam paper uploaded successfully");
 
       setFile(null);
-      fetchExams();
-      fetchLogs();
-      fetchAnalytics();
+
+      await fetchExams();
+
+      if (role === "admin") {
+        fetchLogs();
+        fetchAnalytics();
+      }
     } catch (error) {
-      showMessage(error.message);
+      showMessage(error.message || "Upload failed");
     } finally {
       setLoading(false);
     }
@@ -267,6 +318,10 @@ function App() {
   const viewPdf = async (exam) => {
     try {
       const id = getExamId(exam);
+
+      if (!id) {
+        throw new Error("Exam ID missing");
+      }
 
       const response = await fetch(`${API_URL}/exams/view/${id}`, {
         headers: authHeaders()
@@ -282,14 +337,14 @@ function App() {
 
       window.open(fileURL, "_blank");
 
-      fetchExams();
+      await fetchExams();
 
       if (role === "admin") {
         fetchLogs();
         fetchAnalytics();
       }
     } catch (error) {
-      showMessage(error.message);
+      showMessage(error.message || "Cannot view PDF");
     }
   };
 
@@ -301,6 +356,10 @@ function App() {
 
     try {
       const id = getExamId(exam);
+
+      if (!id) {
+        throw new Error("Exam ID missing");
+      }
 
       const response = await fetch(`${API_URL}/exams/download/${id}`, {
         headers: authHeaders()
@@ -323,7 +382,7 @@ function App() {
 
       URL.revokeObjectURL(fileURL);
     } catch (error) {
-      showMessage(error.message);
+      showMessage(error.message || "Download failed");
     }
   };
 
@@ -357,7 +416,7 @@ function App() {
       setVerifyResult(data);
       showMessage("Verification completed");
     } catch (error) {
-      showMessage(error.message);
+      showMessage(error.message || "Verification failed");
     } finally {
       setLoading(false);
     }
@@ -375,7 +434,9 @@ function App() {
 
   const shortText = (text, length = 18) => {
     if (!text) return "-";
-    return text.length > length ? `${text.slice(0, length)}...` : text;
+    return String(text).length > length
+      ? `${String(text).slice(0, length)}...`
+      : text;
   };
 
   if (!token) {
@@ -383,7 +444,10 @@ function App() {
       <div className="app">
         <div className="auth-container">
           <h1>Blockchain Exam Paper Security System</h1>
-          <p>Secure exam upload, blockchain hash verification, and controlled student access.</p>
+          <p>
+            Secure exam upload, blockchain hash verification, and controlled
+            student access.
+          </p>
 
           {message && <div className="message">{message}</div>}
 
@@ -460,7 +524,10 @@ function App() {
                 placeholder="Password"
                 value={registerForm.password}
                 onChange={(e) =>
-                  setRegisterForm({ ...registerForm, password: e.target.value })
+                  setRegisterForm({
+                    ...registerForm,
+                    password: e.target.value
+                  })
                 }
                 required
               />
@@ -511,7 +578,10 @@ function App() {
                 placeholder="Subject Name"
                 value={uploadForm.subjectName}
                 onChange={(e) =>
-                  setUploadForm({ ...uploadForm, subjectName: e.target.value })
+                  setUploadForm({
+                    ...uploadForm,
+                    subjectName: e.target.value
+                  })
                 }
                 required
               />
@@ -521,7 +591,10 @@ function App() {
                 placeholder="Course Code"
                 value={uploadForm.courseCode}
                 onChange={(e) =>
-                  setUploadForm({ ...uploadForm, courseCode: e.target.value })
+                  setUploadForm({
+                    ...uploadForm,
+                    courseCode: e.target.value
+                  })
                 }
                 required
               />
@@ -531,7 +604,10 @@ function App() {
                 placeholder="Semester"
                 value={uploadForm.semester}
                 onChange={(e) =>
-                  setUploadForm({ ...uploadForm, semester: e.target.value })
+                  setUploadForm({
+                    ...uploadForm,
+                    semester: e.target.value
+                  })
                 }
                 required
               />
@@ -541,7 +617,10 @@ function App() {
                 placeholder="Exam Type"
                 value={uploadForm.examType}
                 onChange={(e) =>
-                  setUploadForm({ ...uploadForm, examType: e.target.value })
+                  setUploadForm({
+                    ...uploadForm,
+                    examType: e.target.value
+                  })
                 }
                 required
               />
@@ -551,7 +630,10 @@ function App() {
                 placeholder="Faculty Name"
                 value={uploadForm.facultyName}
                 onChange={(e) =>
-                  setUploadForm({ ...uploadForm, facultyName: e.target.value })
+                  setUploadForm({
+                    ...uploadForm,
+                    facultyName: e.target.value
+                  })
                 }
                 required
               />
@@ -561,7 +643,10 @@ function App() {
                 placeholder="Duration"
                 value={uploadForm.duration}
                 onChange={(e) =>
-                  setUploadForm({ ...uploadForm, duration: e.target.value })
+                  setUploadForm({
+                    ...uploadForm,
+                    duration: e.target.value
+                  })
                 }
                 required
               />
@@ -571,7 +656,10 @@ function App() {
                 placeholder="Student View Limit"
                 value={uploadForm.downloadLimit}
                 onChange={(e) =>
-                  setUploadForm({ ...uploadForm, downloadLimit: e.target.value })
+                  setUploadForm({
+                    ...uploadForm,
+                    downloadLimit: e.target.value
+                  })
                 }
                 required
               />
@@ -621,16 +709,43 @@ function App() {
             <section className="card">
               <h2>Upload Result</h2>
 
-              <p><b>Subject:</b> {uploadResult.subjectName}</p>
-              <p><b>Course Code:</b> {uploadResult.courseCode}</p>
-              <p><b>Semester:</b> {uploadResult.semester}</p>
-              <p><b>Exam Type:</b> {uploadResult.examType}</p>
-              <p><b>Faculty:</b> {uploadResult.facultyName}</p>
-              <p><b>Duration:</b> {uploadResult.duration}</p>
-              <p><b>File:</b> {uploadResult.filename}</p>
-              <p><b>Blockchain ID:</b> {uploadResult.blockchainPaperId}</p>
-              <p><b>Hash:</b> {uploadResult.hash}</p>
-              <p><b>Tx Hash:</b> {uploadResult.blockchainTxHash}</p>
+              <p>
+                <b>Subject:</b> {uploadResult.subjectName}
+              </p>
+              <p>
+                <b>Course Code:</b> {uploadResult.courseCode}
+              </p>
+              <p>
+                <b>Semester:</b> {uploadResult.semester}
+              </p>
+              <p>
+                <b>Exam Type:</b> {uploadResult.examType}
+              </p>
+              <p>
+                <b>Faculty:</b> {uploadResult.facultyName}
+              </p>
+              <p>
+                <b>Duration:</b> {uploadResult.duration}
+              </p>
+              <p>
+                <b>Student View Limit:</b>{" "}
+                {uploadResult.downloadLimit || 1} time
+              </p>
+              <p>
+                <b>Student Download:</b> Disabled
+              </p>
+              <p>
+                <b>File:</b> {uploadResult.filename}
+              </p>
+              <p>
+                <b>Blockchain ID:</b> {uploadResult.blockchainPaperId}
+              </p>
+              <p>
+                <b>Hash:</b> {uploadResult.hash}
+              </p>
+              <p>
+                <b>Tx Hash:</b> {uploadResult.blockchainTxHash}
+              </p>
 
               {uploadResult.blockchainTxHash && (
                 <a
@@ -718,19 +833,21 @@ function App() {
                 </tr>
               ) : (
                 exams.map((exam) => (
-                  <tr key={getExamId(exam)}>
-                    <td>{exam.subjectName || exam.title}</td>
-                    <td>{exam.courseCode}</td>
-                    <td>{exam.semester}</td>
-                    <td>{exam.examType}</td>
-                    <td>{exam.facultyName}</td>
-                    <td>{exam.duration}</td>
+                  <tr key={getExamId(exam) || exam.filename}>
+                    <td>{exam.subjectName || exam.title || "-"}</td>
+                    <td>{exam.courseCode || "-"}</td>
+                    <td>{exam.semester || "-"}</td>
+                    <td>{exam.examType || "-"}</td>
+                    <td>{exam.facultyName || "-"}</td>
+                    <td>{exam.duration || "-"}</td>
                     <td>{exam.downloadLimit || 1} time</td>
                     <td>{role === "student" ? "Disabled" : "Admin Only"}</td>
                     <td>
                       {exam.blockchainPaperId || "-"}
                       <br />
-                      <button onClick={() => copyToClipboard(exam.blockchainPaperId)}>
+                      <button
+                        onClick={() => copyToClipboard(exam.blockchainPaperId)}
+                      >
                         Copy
                       </button>
                     </td>
@@ -749,7 +866,9 @@ function App() {
                     <td>
                       {shortText(exam.blockchainTxHash, 20)}
                       <br />
-                      <button onClick={() => copyToClipboard(exam.blockchainTxHash)}>
+                      <button
+                        onClick={() => copyToClipboard(exam.blockchainTxHash)}
+                      >
                         Copy
                       </button>
                     </td>
@@ -816,7 +935,9 @@ function App() {
                       <td>{log.filename || "-"}</td>
                       <td>{log.status || "-"}</td>
                       <td>{log.ipAddress || log.ip || "-"}</td>
-                      <td>{formatDate(log.createdAt || log.time || log.timestamp)}</td>
+                      <td>
+                        {formatDate(log.createdAt || log.time || log.timestamp)}
+                      </td>
                     </tr>
                   ))
                 )}
