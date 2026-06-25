@@ -159,11 +159,11 @@ function App() {
 
   const fetchExams = async () => {
     try {
-      const data = await apiJson(`${API_URL}/exams-debug/all`, {
+      const data = await apiJson(`${API_URL}/exams`, {
         headers: authHeaders()
       });
 
-      console.log("DIRECT EXAMS RESPONSE:", data);
+      console.log("EXAMS RESPONSE:", data);
 
       if (Array.isArray(data)) {
         setExams(data);
