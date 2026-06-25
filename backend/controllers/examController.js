@@ -274,11 +274,9 @@ const uploadExam = async (req, res) => {
 const getAllExams = async (req, res) => {
   try {
     const exams = await Exam.find({})
-      .sort({
-        uploadedAt: -1,
-        createdAt: -1,
-        _id: -1
-      })
+      .select("-encryptedData")
+      .sort({ _id: -1 })
+      .limit(50)
       .lean();
 
     return res.json({
