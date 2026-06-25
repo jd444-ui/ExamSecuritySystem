@@ -5,9 +5,7 @@ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function App() {
   const [mode, setMode] = useState("login");
-
   const [token, setToken] = useState(localStorage.getItem("token") || "");
-
   const [user, setUser] = useState(
     JSON.parse(localStorage.getItem("user") || "null")
   );
@@ -38,6 +36,8 @@ function App() {
   const [logs, setLogs] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [message, setMessage] = useState("");
+
+  const isAdmin = user?.role === "admin";
 
   const authHeaders = {
     Authorization: `Bearer ${token}`
@@ -135,7 +135,6 @@ function App() {
       }
 
       showMessage("Registration successful. Login now.");
-
       setMode("login");
 
       setAuthForm({
@@ -183,7 +182,7 @@ function App() {
   };
 
   const fetchLogs = async () => {
-    if (user?.role !== "admin") return;
+    if (!isAdmin) return;
 
     try {
       const res = await fetch(`${API_URL}/exams/logs`, {
@@ -205,7 +204,7 @@ function App() {
   };
 
   const fetchAnalytics = async () => {
-    if (user?.role !== "admin") return;
+    if (!isAdmin) return;
 
     try {
       const res = await fetch(`${API_URL}/exams/analytics`, {
@@ -228,7 +227,7 @@ function App() {
   const handleUpload = async (e) => {
     e.preventDefault();
 
-    if (user?.role !== "admin") {
+    if (!isAdmin) {
       showMessage("Only admin can upload exam papers");
       return;
     }
@@ -294,7 +293,7 @@ function App() {
   const handleVerify = async (e) => {
     e.preventDefault();
 
-    if (user?.role !== "admin") {
+    if (!isAdmin) {
       showMessage("Only admin can verify PDFs");
       return;
     }
@@ -348,7 +347,7 @@ function App() {
 
       window.open(url, "_blank");
 
-      if (user?.role === "admin") {
+      if (isAdmin) {
         fetchLogs();
       }
     } catch (error) {
@@ -357,7 +356,7 @@ function App() {
   };
 
   const downloadPdf = async (id, filename) => {
-    if (user?.role !== "admin") {
+    if (!isAdmin) {
       showMessage("Student download is disabled");
       return;
     }
@@ -409,7 +408,7 @@ function App() {
     if (token) {
       fetchExams();
 
-      if (user?.role === "admin") {
+      if (isAdmin) {
         fetchLogs();
         fetchAnalytics();
       }
@@ -633,7 +632,7 @@ function App() {
 
       {message && <div className="message-box">{message}</div>}
 
-      {user?.role === "admin" && analytics && (
+      {isAdmin && analytics && (
         <div className="analytics-grid">
           <div>
             <h3>Total Exams</h3>
@@ -657,7 +656,7 @@ function App() {
         </div>
       )}
 
-      {user?.role === "admin" && (
+      {isAdmin && (
         <section className="panel">
           <h2>Upload Exam Paper</h2>
 
@@ -825,7 +824,7 @@ function App() {
                         View
                       </button>
 
-                      {user?.role === "admin" && (
+                      {isAdmin && (
                         <button
                           className="small-btn"
                           onClick={() =>
@@ -844,7 +843,7 @@ function App() {
         </div>
       </section>
 
-      {user?.role === "admin" && (
+      {isAdmin && (
         <section className="panel">
           <h2>Verify PDF</h2>
 
@@ -862,7 +861,7 @@ function App() {
         </section>
       )}
 
-      {user?.role === "admin" && (
+      {isAdmin && (
         <section className="panel">
           <div className="section-title">
             <h2>Access Logs</h2>
