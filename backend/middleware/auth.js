@@ -23,27 +23,30 @@ const protect = async (req, res, next) => {
       decoded.user?.id ||
       decoded.user?._id;
 
-    let user = null;
+    let dbUser = null;
 
     if (userId) {
-      user = await User.findById(userId).select("-password").lean();
+      dbUser = await User.findById(userId).select("-password").lean();
     }
 
     req.user = {
-      id: user?._id?.toString() || userId || "unknown-user",
-      _id: user?._id || userId || "unknown-user",
+      id: dbUser?._id?.toString() || userId || "unknown-user",
+      _id: dbUser?._id || userId || "unknown-user",
+
       email:
-        user?.email ||
+        dbUser?.email ||
         decoded.email ||
         decoded.user?.email ||
         "unknown-user",
+
       name:
-        user?.name ||
+        dbUser?.name ||
         decoded.name ||
         decoded.user?.name ||
         "unknown-user",
+
       role:
-        user?.role ||
+        dbUser?.role ||
         decoded.role ||
         decoded.user?.role ||
         "unknown"

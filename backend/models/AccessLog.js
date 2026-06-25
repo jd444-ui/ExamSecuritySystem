@@ -19,7 +19,6 @@ const AccessLogSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: ["admin", "student", "unknown"],
       default: "unknown"
     },
 
