@@ -59,16 +59,23 @@ function App() {
 
   const getId = (item) => item?._id || item?.id;
 
-  const formatDate = (value) => {
-    if (!value) return "-";
+ const formatDate = (value) => {
+  if (!value) return "-";
 
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
-    }
-  };
-
+  try {
+    return new Date(value).toLocaleString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      day: "2-digit",
+      month: "2-digit",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true
+    });
+  } catch {
+    return value;
+  }
+};
   const shortText = (text, count = 18) => {
     if (!text) return "-";
     return String(text).length > count
@@ -297,13 +304,24 @@ function App() {
       formData.append("duration", uploadForm.duration);
       formData.append("downloadLimit", uploadForm.downloadLimit);
 
-      if (uploadForm.examStartTime) {
-        formData.append("examStartTime", uploadForm.examStartTime);
-      }
+     const convertLocalDateTimeToISO = (value) => {
+  if (!value) return "";
+  return new Date(value).toISOString();
+};
 
-      if (uploadForm.examEndTime) {
-        formData.append("examEndTime", uploadForm.examEndTime);
-      }
+if (uploadForm.examStartTime) {
+  formData.append(
+    "examStartTime",
+    convertLocalDateTimeToISO(uploadForm.examStartTime)
+  );
+}
+
+if (uploadForm.examEndTime) {
+  formData.append(
+    "examEndTime",
+    convertLocalDateTimeToISO(uploadForm.examEndTime)
+  );
+}
 
       const response = await fetch(`${API_URL}/exams/upload`, {
         method: "POST",
