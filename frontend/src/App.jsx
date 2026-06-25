@@ -9,7 +9,7 @@ function App() {
 
   const [token, setToken] = useState(localStorage.getItem("token") || "");
   const [role, setRole] = useState(localStorage.getItem("role") || "");
-  const [userName, setUserName] = useState(localStorage.getItem("name") || "");
+  const [name, setName] = useState(localStorage.getItem("name") || "");
 
   const [loginForm, setLoginForm] = useState({
     email: "",
@@ -57,17 +57,71 @@ function App() {
     setTimeout(() => setMessage(""), 5000);
   };
 
-  const getExamId = (exam) => {
-    return exam?._id || exam?.id;
+  const getId = (item) => item?._id || item?.id;
+
+  const formatDate = (value) => {
+    if (!value) return "-";
+
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return value;
+    }
   };
 
-  const copyToClipboard = async (text) => {
+  const shortText = (text, count = 18) => {
+    if (!text) return "-";
+    return String(text).length > count
+      ? String(text).slice(0, count) + "..."
+      : String(text);
+  };
+
+  const copyText = async (text) => {
     try {
       await navigator.clipboard.writeText(text || "");
-      showMessage("Copied successfully");
+      showMessage("Copied");
     } catch {
       showMessage("Copy failed");
     }
+  };
+
+  const extractArray = (data) => {
+    if (Array.isArray(data)) return data;
+
+    const possibleKeys = [
+      "exams",
+      "examPapers",
+      "papers",
+      "allExams",
+      "allPapers",
+      "data",
+      "result",
+      "results",
+      "items",
+      "records",
+      "logs",
+      "accessLogs"
+    ];
+
+    for (const key of possibleKeys) {
+      if (Array.isArray(data?.[key])) {
+        return data[key];
+      }
+
+      if (Array.isArray(data?.[key]?.exams)) {
+        return data[key].exams;
+      }
+
+      if (Array.isArray(data?.[key]?.papers)) {
+        return data[key].papers;
+      }
+
+      if (Array.isArray(data?.[key]?.data)) {
+        return data[key].data;
+      }
+    }
+
+    return [];
   };
 
   const apiJson = async (url, options = {}) => {
@@ -97,23 +151,23 @@ function App() {
 
       const userToken = data.token;
       const userRole = data.role || data.user?.role;
-      const name = data.name || data.user?.name || loginForm.email;
+      const userName = data.name || data.user?.name || loginForm.email;
 
       if (!userToken) {
-        throw new Error("Token not received from backend");
+        throw new Error("Login failed: token not received");
       }
 
       localStorage.setItem("token", userToken);
       localStorage.setItem("role", userRole || "");
-      localStorage.setItem("name", name || "");
+      localStorage.setItem("name", userName || "");
 
       setToken(userToken);
       setRole(userRole || "");
-      setUserName(name || "");
+      setName(userName || "");
 
       showMessage("Login successful");
     } catch (error) {
-      showMessage(error.message || "Login failed");
+      showMessage(error.message);
     } finally {
       setLoading(false);
     }
@@ -136,20 +190,17 @@ function App() {
       showMessage("Registration successful. Now login.");
       setMode("login");
     } catch (error) {
-      showMessage(error.message || "Registration failed");
+      showMessage(error.message);
     } finally {
       setLoading(false);
     }
   };
 
   const logout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("role");
-    localStorage.removeItem("name");
-
+    localStorage.clear();
     setToken("");
     setRole("");
-    setUserName("");
+    setName("");
     setExams([]);
     setLogs([]);
     setAnalytics(null);
@@ -158,26 +209,32 @@ function App() {
   };
 
   const fetchExams = async () => {
-    try {
-      const data = await apiJson(`${API_URL}/exams`, {
-        headers: authHeaders()
-      });
+    const endpoints = [
+      `${API_URL}/exams`,
+      `${API_URL}/exams/all`,
+      `${API_URL}/exams/list`,
+      `${API_URL}/exams/admin/all`
+    ];
 
-      console.log("EXAMS RESPONSE:", data);
+    for (const endpoint of endpoints) {
+      try {
+        const data = await apiJson(endpoint, {
+          headers: authHeaders()
+        });
 
-      if (Array.isArray(data)) {
-        setExams(data);
-      } else if (Array.isArray(data.exams)) {
-        setExams(data.exams);
-      } else if (Array.isArray(data.data)) {
-        setExams(data.data);
-      } else {
-        setExams([]);
+        const list = extractArray(data);
+
+        if (list.length > 0) {
+          setExams(list);
+          return;
+        }
+
+        if (endpoint.endsWith("/exams")) {
+          setExams(list);
+        }
+      } catch {
+        // try next endpoint
       }
-    } catch (error) {
-      console.log("FETCH EXAMS ERROR:", error);
-      showMessage(error.message || "Failed to fetch exam papers");
-      setExams([]);
     }
   };
 
@@ -187,15 +244,7 @@ function App() {
         headers: authHeaders()
       });
 
-      if (Array.isArray(data)) {
-        setLogs(data);
-      } else if (Array.isArray(data.logs)) {
-        setLogs(data.logs);
-      } else if (Array.isArray(data.data)) {
-        setLogs(data.data);
-      } else {
-        setLogs([]);
-      }
+      setLogs(extractArray(data));
     } catch {
       setLogs([]);
     }
@@ -207,7 +256,7 @@ function App() {
         headers: authHeaders()
       });
 
-      setAnalytics(data.analytics || data);
+      setAnalytics(data.analytics || data.data || data);
     } catch {
       setAnalytics(null);
     }
@@ -228,7 +277,7 @@ function App() {
     e.preventDefault();
 
     if (!file) {
-      showMessage("Please choose a PDF file");
+      showMessage("Please select a PDF file");
       return;
     }
 
@@ -268,107 +317,75 @@ function App() {
         throw new Error(data.message || data.error || "Upload failed");
       }
 
-      const uploadedExam = data.exam || data.data || data;
+      const savedExam =
+        data.exam ||
+        data.paper ||
+        data.examPaper ||
+        data.data ||
+        data.result ||
+        data;
 
-      setUploadResult(uploadedExam);
+      setUploadResult(savedExam);
 
-      if (uploadedExam && (uploadedExam._id || uploadedExam.id)) {
-        setExams((old) => [uploadedExam, ...old]);
+      if (savedExam && (savedExam._id || savedExam.id || savedExam.filename)) {
+        setExams((prev) => {
+          const savedId = getId(savedExam);
+
+          if (savedId && prev.some((item) => getId(item) === savedId)) {
+            return prev;
+          }
+
+          return [savedExam, ...prev];
+        });
       }
 
       showMessage("Exam paper uploaded successfully");
+
       setFile(null);
 
-      await fetchExams();
+      setTimeout(() => {
+        fetchExams();
+        fetchLogs();
+        fetchAnalytics();
+      }, 1500);
+    } catch (error) {
+      showMessage(error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const viewPdf = async (exam) => {
+    try {
+      const id = getId(exam);
+
+      if (!id) {
+        throw new Error("Exam ID missing");
+      }
+
+      const response = await fetch(`${API_URL}/exams/view/${id}`, {
+        headers: authHeaders()
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || errorData.error || "View failed");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+
+      window.open(url, "_blank");
+
+      fetchExams();
 
       if (role === "admin") {
         fetchLogs();
         fetchAnalytics();
       }
     } catch (error) {
-      showMessage(error.message || "Upload failed");
-    } finally {
-      setLoading(false);
+      showMessage(error.message);
     }
-  };
-
-  const openPdfFromRoutes = async (exam, shouldDownload = false) => {
-    const id = getExamId(exam);
-
-    if (!id) {
-      showMessage("Exam ID missing");
-      return;
-    }
-
-    const routesToTry = shouldDownload
-      ? [
-          `${API_URL}/exams/download/${id}`,
-          `${API_URL}/exams/view/${id}`,
-          `${API_URL}/exams/access/${id}`
-        ]
-      : [
-          `${API_URL}/exams/view/${id}`,
-          `${API_URL}/exams/access/${id}`,
-          `${API_URL}/exams/download/${id}`
-        ];
-
-    let lastError = "PDF request failed";
-
-    for (const url of routesToTry) {
-      try {
-        const response = await fetch(url, {
-          method: "GET",
-          headers: authHeaders()
-        });
-
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          lastError =
-            errorData.message ||
-            errorData.error ||
-            `Failed at route: ${url}`;
-          continue;
-        }
-
-        const blob = await response.blob();
-
-        if (blob.size === 0) {
-          lastError = "Empty PDF received";
-          continue;
-        }
-
-        const fileURL = URL.createObjectURL(blob);
-
-        if (shouldDownload) {
-          const a = document.createElement("a");
-          a.href = fileURL;
-          a.download = exam.filename || "exam-paper.pdf";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          URL.revokeObjectURL(fileURL);
-        } else {
-          window.open(fileURL, "_blank");
-        }
-
-        await fetchExams();
-
-        if (role === "admin") {
-          fetchLogs();
-          fetchAnalytics();
-        }
-
-        return;
-      } catch (error) {
-        lastError = error.message;
-      }
-    }
-
-    showMessage(lastError);
-  };
-
-  const viewPdf = async (exam) => {
-    await openPdfFromRoutes(exam, false);
   };
 
   const downloadPdf = async (exam) => {
@@ -377,14 +394,43 @@ function App() {
       return;
     }
 
-    await openPdfFromRoutes(exam, true);
+    try {
+      const id = getId(exam);
+
+      if (!id) {
+        throw new Error("Exam ID missing");
+      }
+
+      const response = await fetch(`${API_URL}/exams/download/${id}`, {
+        headers: authHeaders()
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || errorData.error || "Download failed");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = exam.filename || "exam-paper.pdf";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      showMessage(error.message);
+    }
   };
 
   const verifyPaper = async (e) => {
     e.preventDefault();
 
     if (!verifyFile) {
-      showMessage("Choose a PDF to verify");
+      showMessage("Please select a PDF file");
       return;
     }
 
@@ -410,28 +456,10 @@ function App() {
       setVerifyResult(data);
       showMessage("Verification completed");
     } catch (error) {
-      showMessage(error.message || "Verification failed");
+      showMessage(error.message);
     } finally {
       setLoading(false);
     }
-  };
-
-  const formatDate = (value) => {
-    if (!value) return "-";
-
-    try {
-      return new Date(value).toLocaleString();
-    } catch {
-      return value;
-    }
-  };
-
-  const shortText = (text, length = 18) => {
-    if (!text) return "-";
-
-    return String(text).length > length
-      ? `${String(text).slice(0, length)}...`
-      : text;
   };
 
   if (!token) {
@@ -463,7 +491,7 @@ function App() {
           </div>
 
           {mode === "login" ? (
-            <form onSubmit={handleLogin} className="card">
+            <form className="card" onSubmit={handleLogin}>
               <h2>Login</h2>
 
               <input
@@ -491,7 +519,7 @@ function App() {
               </button>
             </form>
           ) : (
-            <form onSubmit={handleRegister} className="card">
+            <form className="card" onSubmit={handleRegister}>
               <h2>Register</h2>
 
               <input
@@ -553,7 +581,7 @@ function App() {
         <div>
           <h1>Exam Paper Security Dashboard</h1>
           <p>
-            Logged in as <b>{userName}</b> | Role: <b>{role}</b>
+            Logged in as <b>{name}</b> | Role: <b>{role}</b>
           </p>
         </div>
 
@@ -567,7 +595,7 @@ function App() {
           <section className="card">
             <h2>Upload Exam Paper</h2>
 
-            <form onSubmit={handleUpload} className="grid-form">
+            <form className="grid-form" onSubmit={handleUpload}>
               <input
                 type="text"
                 placeholder="Subject Name"
@@ -578,7 +606,6 @@ function App() {
                     subjectName: e.target.value
                   })
                 }
-                required
               />
 
               <input
@@ -591,7 +618,6 @@ function App() {
                     courseCode: e.target.value
                   })
                 }
-                required
               />
 
               <input
@@ -604,7 +630,6 @@ function App() {
                     semester: e.target.value
                   })
                 }
-                required
               />
 
               <input
@@ -617,7 +642,6 @@ function App() {
                     examType: e.target.value
                   })
                 }
-                required
               />
 
               <input
@@ -630,7 +654,6 @@ function App() {
                     facultyName: e.target.value
                   })
                 }
-                required
               />
 
               <input
@@ -643,12 +666,11 @@ function App() {
                     duration: e.target.value
                   })
                 }
-                required
               />
 
               <input
                 type="number"
-                placeholder="Student View Limit"
+                placeholder="View Limit"
                 value={uploadForm.downloadLimit}
                 onChange={(e) =>
                   setUploadForm({
@@ -656,7 +678,6 @@ function App() {
                     downloadLimit: e.target.value
                   })
                 }
-                required
               />
 
               <label>
@@ -690,12 +711,11 @@ function App() {
               <input
                 type="file"
                 accept="application/pdf"
-                onChange={(e) => setFile(e.target.files[0])}
-                required
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
               />
 
               <button disabled={loading}>
-                {loading ? "Uploading to Blockchain..." : "Upload Exam Paper"}
+                {loading ? "Uploading..." : "Upload Exam Paper"}
               </button>
             </form>
           </section>
@@ -705,41 +725,38 @@ function App() {
               <h2>Upload Result</h2>
 
               <p>
-                <b>Subject:</b> {uploadResult.subjectName}
+                <b>Subject:</b>{" "}
+                {uploadResult.subjectName || uploadResult.title || "-"}
               </p>
+
               <p>
-                <b>Course Code:</b> {uploadResult.courseCode}
+                <b>File:</b> {uploadResult.filename || "-"}
               </p>
+
               <p>
-                <b>Semester:</b> {uploadResult.semester}
+                <b>Blockchain ID:</b>{" "}
+                {uploadResult.blockchainPaperId || "-"}{" "}
+                <button
+                  onClick={() => copyText(uploadResult.blockchainPaperId)}
+                >
+                  Copy
+                </button>
               </p>
+
               <p>
-                <b>Exam Type:</b> {uploadResult.examType}
+                <b>Hash:</b> {uploadResult.hash || "-"}{" "}
+                <button onClick={() => copyText(uploadResult.hash)}>
+                  Copy
+                </button>
               </p>
+
               <p>
-                <b>Faculty:</b> {uploadResult.facultyName}
-              </p>
-              <p>
-                <b>Duration:</b> {uploadResult.duration}
-              </p>
-              <p>
-                <b>Student View Limit:</b>{" "}
-                {uploadResult.downloadLimit || 1} time
-              </p>
-              <p>
-                <b>Student Download:</b> Disabled
-              </p>
-              <p>
-                <b>File:</b> {uploadResult.filename}
-              </p>
-              <p>
-                <b>Blockchain ID:</b> {uploadResult.blockchainPaperId}
-              </p>
-              <p>
-                <b>Hash:</b> {uploadResult.hash}
-              </p>
-              <p>
-                <b>Tx Hash:</b> {uploadResult.blockchainTxHash}
+                <b>Tx Hash:</b> {uploadResult.blockchainTxHash || "-"}{" "}
+                <button
+                  onClick={() => copyText(uploadResult.blockchainTxHash)}
+                >
+                  Copy
+                </button>
               </p>
 
               {uploadResult.blockchainTxHash && (
@@ -755,13 +772,13 @@ function App() {
           )}
 
           <section className="card">
-            <h2>Verify Suspicious PDF</h2>
+            <h2>Verify PDF</h2>
 
-            <form onSubmit={verifyPaper} className="grid-form">
+            <form className="grid-form" onSubmit={verifyPaper}>
               <input
                 type="file"
                 accept="application/pdf"
-                onChange={(e) => setVerifyFile(e.target.files[0])}
+                onChange={(e) => setVerifyFile(e.target.files?.[0] || null)}
               />
 
               <button disabled={loading}>
@@ -770,27 +787,9 @@ function App() {
             </form>
 
             {verifyResult && (
-              <div className="verify-box">
-                <h3>Verification Result</h3>
-                <pre>{JSON.stringify(verifyResult, null, 2)}</pre>
-              </div>
+              <pre>{JSON.stringify(verifyResult, null, 2)}</pre>
             )}
           </section>
-
-          {analytics && (
-            <section className="card">
-              <h2>Analytics</h2>
-
-              <div className="analytics-grid">
-                {Object.entries(analytics).map(([key, value]) => (
-                  <div className="analytics-box" key={key}>
-                    <h3>{String(value)}</h3>
-                    <p>{key}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
         </>
       )}
 
@@ -827,8 +826,8 @@ function App() {
                   <td colSpan="15">No exam papers found</td>
                 </tr>
               ) : (
-                exams.map((exam) => (
-                  <tr key={getExamId(exam) || exam.filename}>
+                exams.map((exam, index) => (
+                  <tr key={getId(exam) || index}>
                     <td>{exam.subjectName || exam.title || "-"}</td>
                     <td>{exam.courseCode || "-"}</td>
                     <td>{exam.semester || "-"}</td>
@@ -841,9 +840,7 @@ function App() {
                     <td>
                       {exam.blockchainPaperId || "-"}
                       <br />
-                      <button
-                        onClick={() => copyToClipboard(exam.blockchainPaperId)}
-                      >
+                      <button onClick={() => copyText(exam.blockchainPaperId)}>
                         Copy
                       </button>
                     </td>
@@ -856,19 +853,15 @@ function App() {
                     </td>
 
                     <td>
-                      {shortText(exam.hash, 20)}
+                      {shortText(exam.hash, 22)}
                       <br />
-                      <button onClick={() => copyToClipboard(exam.hash)}>
-                        Copy
-                      </button>
+                      <button onClick={() => copyText(exam.hash)}>Copy</button>
                     </td>
 
                     <td>
-                      {shortText(exam.blockchainTxHash, 20)}
+                      {shortText(exam.blockchainTxHash, 22)}
                       <br />
-                      <button
-                        onClick={() => copyToClipboard(exam.blockchainTxHash)}
-                      >
+                      <button onClick={() => copyText(exam.blockchainTxHash)}>
                         Copy
                       </button>
                     </td>
@@ -903,49 +896,73 @@ function App() {
       </section>
 
       {role === "admin" && (
-        <section className="card">
-          <h2>Access Logs</h2>
+        <>
+          {analytics && (
+            <section className="card">
+              <h2>Analytics</h2>
 
-          <button onClick={fetchLogs}>Refresh Logs</button>
+              <div className="analytics-grid">
+                {Object.entries(analytics).map(([key, value]) => (
+                  <div className="analytics-box" key={key}>
+                    <h3>{String(value)}</h3>
+                    <p>{key}</p>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
-          <div className="table-wrapper">
-            <table>
-              <thead>
-                <tr>
-                  <th>User</th>
-                  <th>Role</th>
-                  <th>Action</th>
-                  <th>File</th>
-                  <th>Status</th>
-                  <th>IP</th>
-                  <th>Time</th>
-                </tr>
-              </thead>
+          <section className="card">
+            <h2>Access Logs</h2>
 
-              <tbody>
-                {logs.length === 0 ? (
+            <button onClick={fetchLogs}>Refresh Logs</button>
+
+            <div className="table-wrapper">
+              <table>
+                <thead>
                   <tr>
-                    <td colSpan="7">No logs found</td>
+                    <th>User</th>
+                    <th>Role</th>
+                    <th>Action</th>
+                    <th>File</th>
+                    <th>Status</th>
+                    <th>IP</th>
+                    <th>Time</th>
                   </tr>
-                ) : (
-                  logs.map((log, index) => (
-                    <tr key={log._id || index}>
-                      <td>{log.userEmail || log.email || log.userId || "-"}</td>
-                      <td>{log.role || "-"}</td>
-                      <td>{log.action || "-"}</td>
-                      <td>{log.filename || "-"}</td>
-                      <td>{log.status || "-"}</td>
-                      <td>{log.ipAddress || log.ip || "-"}</td>
-                      <td>
-                        {formatDate(log.createdAt || log.time || log.timestamp)}
-                      </td>
+                </thead>
+
+                <tbody>
+                  {logs.length === 0 ? (
+                    <tr>
+                      <td colSpan="7">No logs found</td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                  ) : (
+                    logs.map((log, index) => (
+                      <tr key={log._id || index}>
+                        <td>
+                          {log.userEmail ||
+                            log.email ||
+                            log.userId ||
+                            "-"}
+                        </td>
+                        <td>{log.role || "-"}</td>
+                        <td>{log.action || "-"}</td>
+                        <td>{log.filename || "-"}</td>
+                        <td>{log.status || "-"}</td>
+                        <td>{log.ipAddress || log.ip || "-"}</td>
+                        <td>
+                          {formatDate(
+                            log.createdAt || log.timestamp || log.time
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
       )}
     </div>
   );
