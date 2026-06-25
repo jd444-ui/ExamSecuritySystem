@@ -159,43 +159,21 @@ function App() {
 
   const fetchExams = async () => {
     try {
-      let data;
+      const data = await apiJson(`${API_URL}/exams-debug/all`, {
+        headers: authHeaders()
+      });
 
-      try {
-        data = await apiJson(`${API_URL}/exams`, {
-          headers: authHeaders()
-        });
-      } catch (error1) {
-        try {
-          data = await apiJson(`${API_URL}/exams/all`, {
-            headers: authHeaders()
-          });
-        } catch (error2) {
-          data = await apiJson(`${API_URL}/exams/list`, {
-            headers: authHeaders()
-          });
-        }
-      }
-
-      console.log("EXAMS RESPONSE:", data);
-
-      let examList = [];
+      console.log("DIRECT EXAMS RESPONSE:", data);
 
       if (Array.isArray(data)) {
-        examList = data;
+        setExams(data);
       } else if (Array.isArray(data.exams)) {
-        examList = data.exams;
-      } else if (Array.isArray(data.examPapers)) {
-        examList = data.examPapers;
-      } else if (Array.isArray(data.papers)) {
-        examList = data.papers;
+        setExams(data.exams);
       } else if (Array.isArray(data.data)) {
-        examList = data.data;
-      } else if (data.exam) {
-        examList = [data.exam];
+        setExams(data.data);
+      } else {
+        setExams([]);
       }
-
-      setExams(examList);
     } catch (error) {
       console.log("FETCH EXAMS ERROR:", error);
       showMessage(error.message || "Failed to fetch exam papers");
@@ -299,7 +277,6 @@ function App() {
       }
 
       showMessage("Exam paper uploaded successfully");
-
       setFile(null);
 
       await fetchExams();
@@ -315,37 +292,83 @@ function App() {
     }
   };
 
-  const viewPdf = async (exam) => {
-    try {
-      const id = getExamId(exam);
+  const openPdfFromRoutes = async (exam, shouldDownload = false) => {
+    const id = getExamId(exam);
 
-      if (!id) {
-        throw new Error("Exam ID missing");
-      }
-
-      const response = await fetch(`${API_URL}/exams/view/${id}`, {
-        headers: authHeaders()
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || errorData.error || "Cannot view PDF");
-      }
-
-      const blob = await response.blob();
-      const fileURL = URL.createObjectURL(blob);
-
-      window.open(fileURL, "_blank");
-
-      await fetchExams();
-
-      if (role === "admin") {
-        fetchLogs();
-        fetchAnalytics();
-      }
-    } catch (error) {
-      showMessage(error.message || "Cannot view PDF");
+    if (!id) {
+      showMessage("Exam ID missing");
+      return;
     }
+
+    const routesToTry = shouldDownload
+      ? [
+          `${API_URL}/exams/download/${id}`,
+          `${API_URL}/exams/view/${id}`,
+          `${API_URL}/exams/access/${id}`
+        ]
+      : [
+          `${API_URL}/exams/view/${id}`,
+          `${API_URL}/exams/access/${id}`,
+          `${API_URL}/exams/download/${id}`
+        ];
+
+    let lastError = "PDF request failed";
+
+    for (const url of routesToTry) {
+      try {
+        const response = await fetch(url, {
+          method: "GET",
+          headers: authHeaders()
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          lastError =
+            errorData.message ||
+            errorData.error ||
+            `Failed at route: ${url}`;
+          continue;
+        }
+
+        const blob = await response.blob();
+
+        if (blob.size === 0) {
+          lastError = "Empty PDF received";
+          continue;
+        }
+
+        const fileURL = URL.createObjectURL(blob);
+
+        if (shouldDownload) {
+          const a = document.createElement("a");
+          a.href = fileURL;
+          a.download = exam.filename || "exam-paper.pdf";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(fileURL);
+        } else {
+          window.open(fileURL, "_blank");
+        }
+
+        await fetchExams();
+
+        if (role === "admin") {
+          fetchLogs();
+          fetchAnalytics();
+        }
+
+        return;
+      } catch (error) {
+        lastError = error.message;
+      }
+    }
+
+    showMessage(lastError);
+  };
+
+  const viewPdf = async (exam) => {
+    await openPdfFromRoutes(exam, false);
   };
 
   const downloadPdf = async (exam) => {
@@ -354,36 +377,7 @@ function App() {
       return;
     }
 
-    try {
-      const id = getExamId(exam);
-
-      if (!id) {
-        throw new Error("Exam ID missing");
-      }
-
-      const response = await fetch(`${API_URL}/exams/download/${id}`, {
-        headers: authHeaders()
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || errorData.error || "Download failed");
-      }
-
-      const blob = await response.blob();
-      const fileURL = URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = fileURL;
-      a.download = exam.filename || "exam-paper.pdf";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-
-      URL.revokeObjectURL(fileURL);
-    } catch (error) {
-      showMessage(error.message || "Download failed");
-    }
+    await openPdfFromRoutes(exam, true);
   };
 
   const verifyPaper = async (e) => {
@@ -434,6 +428,7 @@ function App() {
 
   const shortText = (text, length = 18) => {
     if (!text) return "-";
+
     return String(text).length > length
       ? `${String(text).slice(0, length)}...`
       : text;
@@ -842,6 +837,7 @@ function App() {
                     <td>{exam.duration || "-"}</td>
                     <td>{exam.downloadLimit || 1} time</td>
                     <td>{role === "student" ? "Disabled" : "Admin Only"}</td>
+
                     <td>
                       {exam.blockchainPaperId || "-"}
                       <br />
@@ -851,11 +847,14 @@ function App() {
                         Copy
                       </button>
                     </td>
+
                     <td>{formatDate(exam.examStartTime)}</td>
                     <td>{formatDate(exam.examEndTime)}</td>
+
                     <td>
                       <span className="status-open">Open</span>
                     </td>
+
                     <td>
                       {shortText(exam.hash, 20)}
                       <br />
@@ -863,6 +862,7 @@ function App() {
                         Copy
                       </button>
                     </td>
+
                     <td>
                       {shortText(exam.blockchainTxHash, 20)}
                       <br />
@@ -872,6 +872,7 @@ function App() {
                         Copy
                       </button>
                     </td>
+
                     <td>
                       <button onClick={() => viewPdf(exam)}>
                         {role === "student" ? "View Paper" : "View PDF"}
