@@ -1,43 +1,61 @@
 const mongoose = require("mongoose");
 
-const AccessLogSchema = new mongoose.Schema({
-  action: {
-    type: String,
-    required: true
-  },
+const AccessLogSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: String,
+      default: "unknown-user"
+    },
 
-  title: {
-    type: String
-  },
+    userEmail: {
+      type: String,
+      default: "unknown-user"
+    },
 
-  filename: {
-    type: String
-  },
+    email: {
+      type: String,
+      default: "unknown-user"
+    },
 
-  blockchainPaperId: {
-    type: String
-  },
+    role: {
+      type: String,
+      enum: ["admin", "student", "unknown"],
+      default: "unknown"
+    },
 
-  status: {
-    type: String
-  },
+    action: {
+      type: String,
+      required: true
+    },
 
-  ipAddress: {
-    type: String
-  },
+    filename: {
+      type: String,
+      default: "-"
+    },
 
-  userAgent: {
-    type: String
-  },
+    status: {
+      type: String,
+      default: "SUCCESS"
+    },
 
-  details: {
-    type: String
-  },
+    ipAddress: {
+      type: String,
+      default: "-"
+    },
 
-  createdAt: {
-    type: Date,
-    default: Date.now
+    ip: {
+      type: String,
+      default: "-"
+    },
+
+    timestamp: {
+      type: Date,
+      default: Date.now
+    }
+  },
+  {
+    timestamps: true
   }
-});
+);
 
 module.exports = mongoose.model("AccessLog", AccessLogSchema);

@@ -42,11 +42,22 @@ const getUser = (req) => {
   };
 };
 
+const getClientIp = (req) => {
+  const forwarded = req.headers["x-forwarded-for"];
+
+  if (forwarded) {
+    return forwarded.split(",")[0].trim();
+  }
+
+  return req.ip || req.socket?.remoteAddress || "-";
+};
+
 const createLog = async (req, action, filename, status) => {
   try {
     if (!AccessLog) return;
 
     const user = getUser(req);
+    const ip = getClientIp(req);
 
     await AccessLog.create({
       userId: user.id,
@@ -56,8 +67,8 @@ const createLog = async (req, action, filename, status) => {
       action,
       filename,
       status,
-      ipAddress: req.ip,
-      ip: req.ip,
+      ipAddress: ip,
+      ip,
       timestamp: new Date()
     });
   } catch (error) {
@@ -83,9 +94,7 @@ const getPdfBufferFromExam = (exam) => {
     pdfBuffer.length === 0 ||
     pdfBuffer.slice(0, 4).toString() !== "%PDF"
   ) {
-    throw new Error(
-      "Stored file is not a valid PDF. Please upload the PDF again."
-    );
+    throw new Error("Stored file is not a valid PDF. Please upload the PDF again.");
   }
 
   return pdfBuffer;
@@ -289,7 +298,7 @@ const getAllExams = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Failed to fetch exam papers"
+      message: error.message || "Failed to fetch exam papers"
     });
   }
 };
@@ -355,7 +364,7 @@ const viewExamPdf = async (req, res) => {
       pdfBuffer: originalPdfBuffer,
       user,
       action: "VIEW",
-      ipAddress: req.ip,
+      ipAddress: getClientIp(req),
       blockchainId: exam.blockchainPaperId
     });
 
@@ -404,7 +413,7 @@ const downloadExamPdf = async (req, res) => {
       pdfBuffer: originalPdfBuffer,
       user,
       action: "DOWNLOAD",
-      ipAddress: req.ip,
+      ipAddress: getClientIp(req),
       blockchainId: exam.blockchainPaperId
     });
 
@@ -449,7 +458,7 @@ const verifyPaper = async (req, res) => {
       .update(fileBuffer)
       .digest("hex");
 
-    const exam = await Exam.findOne({ hash }).lean();
+    const exam = await Exam.findOne({ hash }).select("-encryptedData").lean();
 
     if (!exam) {
       return res.json({
@@ -501,11 +510,7 @@ const getAccessLogs = async (req, res) => {
     }
 
     const logs = await AccessLog.find({})
-      .sort({
-        createdAt: -1,
-        timestamp: -1,
-        _id: -1
-      })
+      .sort({ _id: -1 })
       .limit(100)
       .lean();
 
