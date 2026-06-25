@@ -1,5 +1,6 @@
 const crypto = require("crypto");
 const fs = require("fs");
+const { PDFDocument, StandardFonts, rgb, degrees } = require("pdf-lib");
 
 const Exam = require("../models/Exam");
 
@@ -21,9 +22,23 @@ const {
 
 const getUser = (req) => {
   return {
-    id: req.user?.id || req.user?._id || req.user?.userId || "unknown",
-    email: req.user?.email || req.user?.user?.email || "unknown",
-    role: req.user?.role || req.user?.user?.role || "unknown"
+    id:
+      req.user?.id ||
+      req.user?._id ||
+      req.user?.userId ||
+      req.user?.user?.id ||
+      "unknown-user",
+
+    email:
+      req.user?.email ||
+      req.user?.user?.email ||
+      req.user?.name ||
+      "unknown-user",
+
+    role:
+      req.user?.role ||
+      req.user?.user?.role ||
+      "unknown"
   };
 };
 
@@ -60,6 +75,113 @@ const makeExamResponse = (exam) => {
   };
 };
 
+const getPdfBufferFromExam = (exam) => {
+  const pdfBuffer = Buffer.from(exam.encryptedData, "base64");
+
+  if (
+    !pdfBuffer ||
+    pdfBuffer.length === 0 ||
+    pdfBuffer.slice(0, 4).toString() !== "%PDF"
+  ) {
+    throw new Error(
+      "Stored file is not a valid PDF. Please upload the PDF again."
+    );
+  }
+
+  return pdfBuffer;
+};
+
+const createWatermarkedPdf = async ({
+  pdfBuffer,
+  user,
+  action,
+  ipAddress,
+  blockchainId
+}) => {
+  const pdfDoc = await PDFDocument.load(pdfBuffer, {
+    ignoreEncryption: true
+  });
+
+  const normalFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const pages = pdfDoc.getPages();
+
+  const time = new Date().toLocaleString("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true
+  });
+
+  const userText = user.email || user.id || "unknown-user";
+  const roleText = user.role || "unknown";
+  const actionText = action || "VIEW";
+  const ipText = ipAddress || "-";
+  const blockchainText = blockchainId || "-";
+
+  pages.forEach((page) => {
+    const { width, height } = page.getSize();
+
+    page.drawText("Blockchain Exam Paper Security System", {
+      x: 28,
+      y: height - 28,
+      size: 8,
+      font: boldFont,
+      color: rgb(0.1, 0.1, 0.1),
+      opacity: 0.9
+    });
+
+    page.drawText("CONFIDENTIAL - STUDENT COPY", {
+      x: width * 0.08,
+      y: height * 0.26,
+      size: 34,
+      font: boldFont,
+      color: rgb(0.9, 0.05, 0.05),
+      opacity: 0.16,
+      rotate: degrees(35)
+    });
+
+    page.drawRectangle({
+      x: 20,
+      y: 18,
+      width: width - 40,
+      height: 42,
+      color: rgb(0.95, 0.95, 0.95),
+      opacity: 0.86
+    });
+
+    const traceLine = `User: ${userText} | Role: ${roleText} | Action: ${actionText} | Time: ${time} | IP: ${ipText} | Blockchain ID: ${blockchainText}`;
+
+    page.drawText(traceLine.slice(0, 180), {
+      x: 28,
+      y: 42,
+      size: 6,
+      font: normalFont,
+      color: rgb(0.05, 0.05, 0.05)
+    });
+
+    page.drawText(
+      "This PDF copy is traceable. Unauthorized sharing is prohibited.",
+      {
+        x: 28,
+        y: 28,
+        size: 6,
+        font: boldFont,
+        color: rgb(0.85, 0, 0)
+      }
+    );
+  });
+
+  const watermarkedBytes = await pdfDoc.save();
+
+  return Buffer.from(watermarkedBytes);
+};
+
 const uploadExam = async (req, res) => {
   try {
     if (!req.file) {
@@ -79,6 +201,13 @@ const uploadExam = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Uploaded file could not be read"
+      });
+    }
+
+    if (fileBuffer.slice(0, 4).toString() !== "%PDF") {
+      return res.status(400).json({
+        success: false,
+        message: "Only valid PDF files are allowed"
       });
     }
 
@@ -222,17 +351,25 @@ const viewExamPdf = async (req, res) => {
       }
     }
 
-    const pdfBuffer = Buffer.from(exam.encryptedData, "base64");
+    const originalPdfBuffer = getPdfBufferFromExam(exam);
+
+    const watermarkedPdfBuffer = await createWatermarkedPdf({
+      pdfBuffer: originalPdfBuffer,
+      user,
+      action: "VIEW",
+      ipAddress: req.ip,
+      blockchainId: exam.blockchainPaperId
+    });
 
     await createLog(req, "VIEW", exam.filename, "SUCCESS");
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      `inline; filename="${exam.filename || "exam-paper.pdf"}"`
+      `inline; filename="watermarked-${exam.filename || "exam-paper.pdf"}"`
     );
 
-    return res.send(pdfBuffer);
+    return res.send(watermarkedPdfBuffer);
   } catch (error) {
     console.log("VIEW ERROR:", error);
 
@@ -263,23 +400,31 @@ const downloadExamPdf = async (req, res) => {
       });
     }
 
-    const pdfBuffer = Buffer.from(exam.encryptedData, "base64");
+    const originalPdfBuffer = getPdfBufferFromExam(exam);
+
+    const watermarkedPdfBuffer = await createWatermarkedPdf({
+      pdfBuffer: originalPdfBuffer,
+      user,
+      action: "DOWNLOAD",
+      ipAddress: req.ip,
+      blockchainId: exam.blockchainPaperId
+    });
 
     await createLog(req, "DOWNLOAD", exam.filename, "SUCCESS");
 
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${exam.filename || "exam-paper.pdf"}"`
+      `attachment; filename="watermarked-${exam.filename || "exam-paper.pdf"}"`
     );
 
-    return res.send(pdfBuffer);
+    return res.send(watermarkedPdfBuffer);
   } catch (error) {
     console.log("DOWNLOAD ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Download failed"
+      message: error.message || "Download failed"
     });
   }
 };
@@ -389,14 +534,17 @@ const getAnalytics = async (req, res) => {
 
     if (AccessLog) {
       totalLogs = await AccessLog.countDocuments();
+
       uploadSuccess = await AccessLog.countDocuments({
         action: "UPLOAD",
         status: "SUCCESS"
       });
+
       views = await AccessLog.countDocuments({
         action: "VIEW",
         status: "SUCCESS"
       });
+
       downloads = await AccessLog.countDocuments({
         action: "DOWNLOAD",
         status: "SUCCESS"
