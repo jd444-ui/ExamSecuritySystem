@@ -1,22 +1,16 @@
 import { useEffect, useState } from "react";
 import "./App.css";
 
-const API_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
 
 function App() {
   const [mode, setMode] = useState("login");
-
   const [token, setToken] = useState(localStorage.getItem("token") || "");
-  const [role, setRole] = useState(localStorage.getItem("role") || "");
-  const [name, setName] = useState(localStorage.getItem("name") || "");
+  const [user, setUser] = useState(
+    JSON.parse(localStorage.getItem("user") || "null")
+  );
 
-  const [loginForm, setLoginForm] = useState({
-    email: "",
-    password: ""
-  });
-
-  const [registerForm, setRegisterForm] = useState({
+  const [authForm, setAuthForm] = useState({
     name: "",
     email: "",
     password: "",
@@ -24,45 +18,299 @@ function App() {
   });
 
   const [uploadForm, setUploadForm] = useState({
-    subjectName: "Blockchain Technology",
-    courseCode: "CSE4001",
-    semester: "6",
-    examType: "FAT",
-    facultyName: "Dr. Faculty Name",
-    duration: "2 Hours",
+    subjectName: "",
+    courseCode: "",
+    semester: "",
+    examType: "",
+    facultyName: "",
+    duration: "",
     downloadLimit: "1",
     examStartTime: "",
-    examEndTime: ""
+    examEndTime: "",
+    file: null
   });
 
-  const [file, setFile] = useState(null);
   const [verifyFile, setVerifyFile] = useState(null);
-
   const [exams, setExams] = useState([]);
   const [logs, setLogs] = useState([]);
   const [analytics, setAnalytics] = useState(null);
-
-  const [uploadResult, setUploadResult] = useState(null);
-  const [verifyResult, setVerifyResult] = useState(null);
-
   const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
 
-  const authHeaders = () => ({
+  const authHeaders = {
     Authorization: `Bearer ${token}`
-  });
-
-  const showMessage = (text) => {
-    setMessage(text);
-    setTimeout(() => setMessage(""), 5000);
   };
 
-  const getId = (item) => item?._id || item?.id;
+  const showMessage = (msg) => {
+    setMessage(msg);
+    setTimeout(() => setMessage(""), 4000);
+  };
 
- const formatDate = (value) => {
-  if (!value) return "-";
+  const extractArray = (data, keys) => {
+    for (const key of keys) {
+      if (Array.isArray(data?.[key])) return data[key];
+    }
+    if (Array.isArray(data)) return data;
+    return [];
+  };
 
-  try {
+  const handleLogin = async (e) => {
+    e.preventDefault();
+
+    try {
+      const res = await fetch(`${API_URL}/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          email: authForm.email,
+          password: authForm.password
+        })
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showMessage(data.message || "Login failed");
+        return;
+      }
+
+      const loginToken = data.token || data.accessToken;
+      const loginUser = data.user || {
+        email: authForm.email,
+        role: data.role || "student"
+      };
+
+      localStorage.setItem("token", loginToken);
+      localStorage.setItem("user", JSON.stringify(loginUser));
+
+      setToken(loginToken);
+      setUser(loginUser);
+      showMessage("Login successful");
+    } catch (error) {
+      showMessage("Backend not reachable");
+    }
+  };
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+
+    try {
+      const res = await fetch(`${API_URL}/auth/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(authForm)
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showMessage(data.message || "Registration failed");
+        return;
+      }
+
+      showMessage("Registration successful. Login now.");
+      setMode("login");
+    } catch (error) {
+      showMessage("Backend not reachable");
+    }
+  };
+
+  const logout = () => {
+    localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setToken("");
+    setUser(null);
+    setExams([]);
+    setLogs([]);
+    setAnalytics(null);
+  };
+
+  const fetchExams = async () => {
+    try {
+      const res = await fetch(`${API_URL}/exams`, {
+        headers: authHeaders
+      });
+
+      const data = await res.json();
+      const list = extractArray(data, ["exams", "papers", "data"]);
+
+      setExams(list);
+    } catch (error) {
+      showMessage("Failed to fetch exams");
+    }
+  };
+
+  const fetchLogs = async () => {
+    try {
+      const res = await fetch(`${API_URL}/exams/logs`, {
+        headers: authHeaders
+      });
+
+      const data = await res.json();
+      const list = extractArray(data, ["logs", "data"]);
+
+      setLogs(list);
+    } catch (error) {
+      showMessage("Failed to fetch logs");
+    }
+  };
+
+  const fetchAnalytics = async () => {
+    try {
+      const res = await fetch(`${API_URL}/exams/analytics`, {
+        headers: authHeaders
+      });
+
+      const data = await res.json();
+      setAnalytics(data.analytics || data.data || data);
+    } catch (error) {
+      showMessage("Failed to fetch analytics");
+    }
+  };
+
+  const handleUpload = async (e) => {
+    e.preventDefault();
+
+    if (!uploadForm.file) {
+      showMessage("Please select PDF file");
+      return;
+    }
+
+    const formData = new FormData();
+
+    Object.keys(uploadForm).forEach((key) => {
+      if (key !== "file" && uploadForm[key]) {
+        if (key === "examStartTime" || key === "examEndTime") {
+          formData.append(key, new Date(uploadForm[key]).toISOString());
+        } else {
+          formData.append(key, uploadForm[key]);
+        }
+      }
+    });
+
+    formData.append("file", uploadForm.file);
+
+    try {
+      showMessage("Uploading to blockchain... please wait");
+
+      const res = await fetch(`${API_URL}/exams/upload`, {
+        method: "POST",
+        headers: authHeaders,
+        body: formData
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        showMessage(data.message || "Upload failed");
+        return;
+      }
+
+      showMessage("Exam uploaded successfully");
+      setUploadForm({
+        subjectName: "",
+        courseCode: "",
+        semester: "",
+        examType: "",
+        facultyName: "",
+        duration: "",
+        downloadLimit: "1",
+        examStartTime: "",
+        examEndTime: "",
+        file: null
+      });
+
+      fetchExams();
+      fetchLogs();
+      fetchAnalytics();
+    } catch (error) {
+      showMessage("Upload failed");
+    }
+  };
+
+  const handleVerify = async (e) => {
+    e.preventDefault();
+
+    if (!verifyFile) {
+      showMessage("Please select PDF to verify");
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append("file", verifyFile);
+
+    try {
+      const res = await fetch(`${API_URL}/exams/verify`, {
+        method: "POST",
+        headers: authHeaders,
+        body: formData
+      });
+
+      const data = await res.json();
+
+      if (data.valid) {
+        showMessage("PDF is valid. Hash matched.");
+      } else {
+        showMessage("PDF is invalid or tampered.");
+      }
+    } catch (error) {
+      showMessage("Verification failed");
+    }
+  };
+
+  const viewPdf = async (id) => {
+    try {
+      const res = await fetch(`${API_URL}/exams/view/${id}`, {
+        headers: authHeaders
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        showMessage(data.message || "Cannot view PDF");
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      fetchLogs();
+    } catch (error) {
+      showMessage("View failed");
+    }
+  };
+
+  const downloadPdf = async (id, filename) => {
+    try {
+      const res = await fetch(`${API_URL}/exams/download/${id}`, {
+        headers: authHeaders
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        showMessage(data.message || "Download failed");
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `watermarked-${filename || "exam-paper.pdf"}`;
+      a.click();
+
+      fetchLogs();
+    } catch (error) {
+      showMessage("Download failed");
+    }
+  };
+
+  const formatDate = (value) => {
+    if (!value) return "-";
+
     return new Date(value).toLocaleString("en-IN", {
       timeZone: "Asia/Kolkata",
       day: "2-digit",
@@ -72,751 +320,308 @@ function App() {
       minute: "2-digit",
       hour12: true
     });
-  } catch {
-    return value;
-  }
-};
-  const shortText = (text, count = 18) => {
-    if (!text) return "-";
-    return String(text).length > count
-      ? String(text).slice(0, count) + "..."
-      : String(text);
-  };
-
-  const copyText = async (text) => {
-    try {
-      await navigator.clipboard.writeText(text || "");
-      showMessage("Copied");
-    } catch {
-      showMessage("Copy failed");
-    }
-  };
-
-  const extractArray = (data) => {
-    if (Array.isArray(data)) return data;
-
-    const possibleKeys = [
-      "exams",
-      "examPapers",
-      "papers",
-      "allExams",
-      "allPapers",
-      "data",
-      "result",
-      "results",
-      "items",
-      "records",
-      "logs",
-      "accessLogs"
-    ];
-
-    for (const key of possibleKeys) {
-      if (Array.isArray(data?.[key])) {
-        return data[key];
-      }
-
-      if (Array.isArray(data?.[key]?.exams)) {
-        return data[key].exams;
-      }
-
-      if (Array.isArray(data?.[key]?.papers)) {
-        return data[key].papers;
-      }
-
-      if (Array.isArray(data?.[key]?.data)) {
-        return data[key].data;
-      }
-    }
-
-    return [];
-  };
-
-  const apiJson = async (url, options = {}) => {
-    const response = await fetch(url, options);
-    const data = await response.json().catch(() => ({}));
-
-    if (!response.ok) {
-      throw new Error(data.message || data.error || "Request failed");
-    }
-
-    return data;
-  };
-
-  const handleLogin = async (e) => {
-    e.preventDefault();
-
-    try {
-      setLoading(true);
-
-      const data = await apiJson(`${API_URL}/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(loginForm)
-      });
-
-      const userToken = data.token;
-      const userRole = data.role || data.user?.role;
-      const userName = data.name || data.user?.name || loginForm.email;
-
-      if (!userToken) {
-        throw new Error("Login failed: token not received");
-      }
-
-      localStorage.setItem("token", userToken);
-      localStorage.setItem("role", userRole || "");
-      localStorage.setItem("name", userName || "");
-
-      setToken(userToken);
-      setRole(userRole || "");
-      setName(userName || "");
-
-      showMessage("Login successful");
-    } catch (error) {
-      showMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleRegister = async (e) => {
-    e.preventDefault();
-
-    try {
-      setLoading(true);
-
-      await apiJson(`${API_URL}/auth/register`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(registerForm)
-      });
-
-      showMessage("Registration successful. Now login.");
-      setMode("login");
-    } catch (error) {
-      showMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const logout = () => {
-    localStorage.clear();
-    setToken("");
-    setRole("");
-    setName("");
-    setExams([]);
-    setLogs([]);
-    setAnalytics(null);
-    setUploadResult(null);
-    setVerifyResult(null);
-  };
-
-  const fetchExams = async () => {
-    const endpoints = [
-      `${API_URL}/exams`,
-      `${API_URL}/exams/all`,
-      `${API_URL}/exams/list`,
-      `${API_URL}/exams/admin/all`
-    ];
-
-    for (const endpoint of endpoints) {
-      try {
-        const data = await apiJson(endpoint, {
-          headers: authHeaders()
-        });
-
-        const list = extractArray(data);
-
-        if (list.length > 0) {
-          setExams(list);
-          return;
-        }
-
-        if (endpoint.endsWith("/exams")) {
-          setExams(list);
-        }
-      } catch {
-        // try next endpoint
-      }
-    }
-  };
-
-  const fetchLogs = async () => {
-    try {
-      const data = await apiJson(`${API_URL}/exams/logs`, {
-        headers: authHeaders()
-      });
-
-      setLogs(extractArray(data));
-    } catch {
-      setLogs([]);
-    }
-  };
-
-  const fetchAnalytics = async () => {
-    try {
-      const data = await apiJson(`${API_URL}/exams/analytics`, {
-        headers: authHeaders()
-      });
-
-      setAnalytics(data.analytics || data.data || data);
-    } catch {
-      setAnalytics(null);
-    }
   };
 
   useEffect(() => {
     if (token) {
       fetchExams();
-
-      if (role === "admin") {
-        fetchLogs();
-        fetchAnalytics();
-      }
+      fetchLogs();
+      fetchAnalytics();
     }
-  }, [token, role]);
-
-  const handleUpload = async (e) => {
-    e.preventDefault();
-
-    if (!file) {
-      showMessage("Please select a PDF file");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setUploadResult(null);
-
-      const formData = new FormData();
-
-      formData.append("file", file);
-      formData.append("title", uploadForm.subjectName);
-      formData.append("subjectName", uploadForm.subjectName);
-      formData.append("courseCode", uploadForm.courseCode);
-      formData.append("semester", uploadForm.semester);
-      formData.append("examType", uploadForm.examType);
-      formData.append("facultyName", uploadForm.facultyName);
-      formData.append("duration", uploadForm.duration);
-      formData.append("downloadLimit", uploadForm.downloadLimit);
-
-     const convertLocalDateTimeToISO = (value) => {
-  if (!value) return "";
-  return new Date(value).toISOString();
-};
-
-if (uploadForm.examStartTime) {
-  formData.append(
-    "examStartTime",
-    convertLocalDateTimeToISO(uploadForm.examStartTime)
-  );
-}
-
-if (uploadForm.examEndTime) {
-  formData.append(
-    "examEndTime",
-    convertLocalDateTimeToISO(uploadForm.examEndTime)
-  );
-}
-
-      const response = await fetch(`${API_URL}/exams/upload`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: formData
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data.message || data.error || "Upload failed");
-      }
-
-      const savedExam =
-        data.exam ||
-        data.paper ||
-        data.examPaper ||
-        data.data ||
-        data.result ||
-        data;
-
-      setUploadResult(savedExam);
-
-      if (savedExam && (savedExam._id || savedExam.id || savedExam.filename)) {
-        setExams((prev) => {
-          const savedId = getId(savedExam);
-
-          if (savedId && prev.some((item) => getId(item) === savedId)) {
-            return prev;
-          }
-
-          return [savedExam, ...prev];
-        });
-      }
-
-      showMessage("Exam paper uploaded successfully");
-
-      setFile(null);
-
-      setTimeout(() => {
-        fetchExams();
-        fetchLogs();
-        fetchAnalytics();
-      }, 1500);
-    } catch (error) {
-      showMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const viewPdf = async (exam) => {
-    try {
-      const id = getId(exam);
-
-      if (!id) {
-        throw new Error("Exam ID missing");
-      }
-
-      const response = await fetch(`${API_URL}/exams/view/${id}`, {
-        headers: authHeaders()
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || errorData.error || "View failed");
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-
-      window.open(url, "_blank");
-
-      fetchExams();
-
-      if (role === "admin") {
-        fetchLogs();
-        fetchAnalytics();
-      }
-    } catch (error) {
-      showMessage(error.message);
-    }
-  };
-
-  const downloadPdf = async (exam) => {
-    if (role === "student") {
-      showMessage("Student download is disabled");
-      return;
-    }
-
-    try {
-      const id = getId(exam);
-
-      if (!id) {
-        throw new Error("Exam ID missing");
-      }
-
-      const response = await fetch(`${API_URL}/exams/download/${id}`, {
-        headers: authHeaders()
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || errorData.error || "Download failed");
-      }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = exam.filename || "exam-paper.pdf";
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      showMessage(error.message);
-    }
-  };
-
-  const verifyPaper = async (e) => {
-    e.preventDefault();
-
-    if (!verifyFile) {
-      showMessage("Please select a PDF file");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setVerifyResult(null);
-
-      const formData = new FormData();
-      formData.append("file", verifyFile);
-
-      const response = await fetch(`${API_URL}/exams/verify`, {
-        method: "POST",
-        headers: authHeaders(),
-        body: formData
-      });
-
-      const data = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(data.message || data.error || "Verification failed");
-      }
-
-      setVerifyResult(data);
-      showMessage("Verification completed");
-    } catch (error) {
-      showMessage(error.message);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [token]);
 
   if (!token) {
     return (
-      <div className="app">
-        <div className="auth-container">
-          <h1>Blockchain Exam Paper Security System</h1>
-          <p>
-            Secure exam upload, blockchain hash verification, and controlled
-            student access.
-          </p>
-
-          {message && <div className="message">{message}</div>}
-
-          <div className="auth-tabs">
-            <button
-              className={mode === "login" ? "active" : ""}
-              onClick={() => setMode("login")}
-            >
-              Login
-            </button>
-
-            <button
-              className={mode === "register" ? "active" : ""}
-              onClick={() => setMode("register")}
-            >
-              Register
-            </button>
+      <div className="auth-page">
+        <div className="auth-left">
+          <div className="brand-row">
+            <div className="shield-logo">🔐</div>
+            <div>
+              <h1>Blockchain Exam Paper Security System</h1>
+              <p>Secure • Verifiable • Controlled Access</p>
+            </div>
           </div>
 
-          {mode === "login" ? (
-            <form className="card" onSubmit={handleLogin}>
-              <h2>Login</h2>
+          <div className="exam-illustration">
+            <div className="paper">
+              <div className="paper-clip"></div>
+              <h2>EXAM PAPER</h2>
+              <div className="paper-line"></div>
+              <div className="paper-line"></div>
+              <div className="paper-line"></div>
+              <div className="paper-line"></div>
+              <div className="paper-line short"></div>
+            </div>
 
-              <input
-                type="email"
-                placeholder="Email"
-                value={loginForm.email}
-                onChange={(e) =>
-                  setLoginForm({ ...loginForm, email: e.target.value })
-                }
-                required
-              />
+            <div className="pencil">
+              <div className="pencil-body"></div>
+              <div className="pencil-tip"></div>
+              <div className="pencil-eraser"></div>
+            </div>
 
-              <input
-                type="password"
-                placeholder="Password"
-                value={loginForm.password}
-                onChange={(e) =>
-                  setLoginForm({ ...loginForm, password: e.target.value })
-                }
-                required
-              />
+            <div className="blockchain-card">
+              <span>Verified on</span>
+              <strong>BLOCKCHAIN</strong>
+            </div>
+          </div>
 
-              <button disabled={loading}>
-                {loading ? "Please wait..." : "Login"}
-              </button>
-            </form>
-          ) : (
-            <form className="card" onSubmit={handleRegister}>
-              <h2>Register</h2>
+          <div className="feature-row">
+            <div className="feature-card">
+              <span>🛡️</span>
+              <h3>End-to-End Security</h3>
+              <p>Protecting exam integrity with encrypted storage.</p>
+            </div>
 
-              <input
-                type="text"
-                placeholder="Name"
-                value={registerForm.name}
-                onChange={(e) =>
-                  setRegisterForm({ ...registerForm, name: e.target.value })
-                }
-                required
-              />
+            <div className="feature-card">
+              <span>⛓️</span>
+              <h3>Blockchain Verified</h3>
+              <p>Every paper hash is recorded on blockchain.</p>
+            </div>
 
-              <input
-                type="email"
-                placeholder="Email"
-                value={registerForm.email}
-                onChange={(e) =>
-                  setRegisterForm({ ...registerForm, email: e.target.value })
-                }
-                required
-              />
-
-              <input
-                type="password"
-                placeholder="Password"
-                value={registerForm.password}
-                onChange={(e) =>
-                  setRegisterForm({
-                    ...registerForm,
-                    password: e.target.value
-                  })
-                }
-                required
-              />
-
-              <select
-                value={registerForm.role}
-                onChange={(e) =>
-                  setRegisterForm({ ...registerForm, role: e.target.value })
-                }
-              >
-                <option value="student">Student</option>
-                <option value="admin">Admin</option>
-              </select>
-
-              <button disabled={loading}>
-                {loading ? "Please wait..." : "Register"}
-              </button>
-            </form>
-          )}
+            <div className="feature-card">
+              <span>👥</span>
+              <h3>Controlled Access</h3>
+              <p>Role-based access for admin and students.</p>
+            </div>
+          </div>
         </div>
+
+        <div className="auth-right">
+          <div className="auth-card">
+            <div className="mini-shield">🔒</div>
+
+            <h2>Blockchain Exam Paper Security System</h2>
+            <p className="auth-subtitle">
+              Secure exam upload, blockchain hash verification, and controlled
+              student access.
+            </p>
+
+            <div className="tab-box">
+              <button
+                className={mode === "login" ? "active" : ""}
+                onClick={() => setMode("login")}
+              >
+                Login
+              </button>
+
+              <button
+                className={mode === "register" ? "active" : ""}
+                onClick={() => setMode("register")}
+              >
+                Register
+              </button>
+            </div>
+
+            <form
+              onSubmit={mode === "login" ? handleLogin : handleRegister}
+              className="auth-form"
+            >
+              {mode === "register" && (
+                <>
+                  <label>Name</label>
+                  <input
+                    type="text"
+                    placeholder="Enter your name"
+                    value={authForm.name}
+                    onChange={(e) =>
+                      setAuthForm({ ...authForm, name: e.target.value })
+                    }
+                    required
+                  />
+
+                  <label>Role</label>
+                  <select
+                    value={authForm.role}
+                    onChange={(e) =>
+                      setAuthForm({ ...authForm, role: e.target.value })
+                    }
+                  >
+                    <option value="student">Student</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                </>
+              )}
+
+              <label>Email Address</label>
+              <input
+                type="email"
+                placeholder="Enter your email"
+                value={authForm.email}
+                onChange={(e) =>
+                  setAuthForm({ ...authForm, email: e.target.value })
+                }
+                required
+              />
+
+              <label>Password</label>
+              <input
+                type="password"
+                placeholder="Enter your password"
+                value={authForm.password}
+                onChange={(e) =>
+                  setAuthForm({ ...authForm, password: e.target.value })
+                }
+                required
+              />
+
+              <button className="gold-btn" type="submit">
+                {mode === "login" ? "Login" : "Register"}
+              </button>
+            </form>
+
+            <p className="switch-text">
+              {mode === "login"
+                ? "Don't have an account?"
+                : "Already have an account?"}{" "}
+              <button
+                onClick={() => setMode(mode === "login" ? "register" : "login")}
+              >
+                {mode === "login" ? "Register" : "Login"}
+              </button>
+            </p>
+
+            <div className="secure-note">
+              🔐 Your data is encrypted and secured on the blockchain.
+            </div>
+          </div>
+        </div>
+
+        {message && <div className="toast">{message}</div>}
       </div>
     );
   }
 
   return (
-    <div className="app">
-      <header className="topbar">
+    <div className="dashboard-page">
+      <div className="dashboard-header">
         <div>
           <h1>Exam Paper Security Dashboard</h1>
           <p>
-            Logged in as <b>{name}</b> | Role: <b>{role}</b>
+            Logged in as <b>{user?.email}</b> | Role: <b>{user?.role}</b>
           </p>
         </div>
 
-        <button onClick={logout}>Logout</button>
-      </header>
+        <button className="logout-btn" onClick={logout}>
+          Logout
+        </button>
+      </div>
 
-      {message && <div className="message">{message}</div>}
+      {message && <div className="message-box">{message}</div>}
 
-      {role === "admin" && (
-        <>
-          <section className="card">
-            <h2>Upload Exam Paper</h2>
-
-            <form className="grid-form" onSubmit={handleUpload}>
-              <input
-                type="text"
-                placeholder="Subject Name"
-                value={uploadForm.subjectName}
-                onChange={(e) =>
-                  setUploadForm({
-                    ...uploadForm,
-                    subjectName: e.target.value
-                  })
-                }
-              />
-
-              <input
-                type="text"
-                placeholder="Course Code"
-                value={uploadForm.courseCode}
-                onChange={(e) =>
-                  setUploadForm({
-                    ...uploadForm,
-                    courseCode: e.target.value
-                  })
-                }
-              />
-
-              <input
-                type="text"
-                placeholder="Semester"
-                value={uploadForm.semester}
-                onChange={(e) =>
-                  setUploadForm({
-                    ...uploadForm,
-                    semester: e.target.value
-                  })
-                }
-              />
-
-              <input
-                type="text"
-                placeholder="Exam Type"
-                value={uploadForm.examType}
-                onChange={(e) =>
-                  setUploadForm({
-                    ...uploadForm,
-                    examType: e.target.value
-                  })
-                }
-              />
-
-              <input
-                type="text"
-                placeholder="Faculty Name"
-                value={uploadForm.facultyName}
-                onChange={(e) =>
-                  setUploadForm({
-                    ...uploadForm,
-                    facultyName: e.target.value
-                  })
-                }
-              />
-
-              <input
-                type="text"
-                placeholder="Duration"
-                value={uploadForm.duration}
-                onChange={(e) =>
-                  setUploadForm({
-                    ...uploadForm,
-                    duration: e.target.value
-                  })
-                }
-              />
-
-              <input
-                type="number"
-                placeholder="View Limit"
-                value={uploadForm.downloadLimit}
-                onChange={(e) =>
-                  setUploadForm({
-                    ...uploadForm,
-                    downloadLimit: e.target.value
-                  })
-                }
-              />
-
-              <label>
-                Start Time
-                <input
-                  type="datetime-local"
-                  value={uploadForm.examStartTime}
-                  onChange={(e) =>
-                    setUploadForm({
-                      ...uploadForm,
-                      examStartTime: e.target.value
-                    })
-                  }
-                />
-              </label>
-
-              <label>
-                End Time
-                <input
-                  type="datetime-local"
-                  value={uploadForm.examEndTime}
-                  onChange={(e) =>
-                    setUploadForm({
-                      ...uploadForm,
-                      examEndTime: e.target.value
-                    })
-                  }
-                />
-              </label>
-
-              <input
-                type="file"
-                accept="application/pdf"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-              />
-
-              <button disabled={loading}>
-                {loading ? "Uploading..." : "Upload Exam Paper"}
-              </button>
-            </form>
-          </section>
-
-          {uploadResult && (
-            <section className="card">
-              <h2>Upload Result</h2>
-
-              <p>
-                <b>Subject:</b>{" "}
-                {uploadResult.subjectName || uploadResult.title || "-"}
-              </p>
-
-              <p>
-                <b>File:</b> {uploadResult.filename || "-"}
-              </p>
-
-              <p>
-                <b>Blockchain ID:</b>{" "}
-                {uploadResult.blockchainPaperId || "-"}{" "}
-                <button
-                  onClick={() => copyText(uploadResult.blockchainPaperId)}
-                >
-                  Copy
-                </button>
-              </p>
-
-              <p>
-                <b>Hash:</b> {uploadResult.hash || "-"}{" "}
-                <button onClick={() => copyText(uploadResult.hash)}>
-                  Copy
-                </button>
-              </p>
-
-              <p>
-                <b>Tx Hash:</b> {uploadResult.blockchainTxHash || "-"}{" "}
-                <button
-                  onClick={() => copyText(uploadResult.blockchainTxHash)}
-                >
-                  Copy
-                </button>
-              </p>
-
-              {uploadResult.blockchainTxHash && (
-                <a
-                  href={`https://sepolia.etherscan.io/tx/${uploadResult.blockchainTxHash}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  View Transaction on Sepolia Etherscan
-                </a>
-              )}
-            </section>
-          )}
-
-          <section className="card">
-            <h2>Verify PDF</h2>
-
-            <form className="grid-form" onSubmit={verifyPaper}>
-              <input
-                type="file"
-                accept="application/pdf"
-                onChange={(e) => setVerifyFile(e.target.files?.[0] || null)}
-              />
-
-              <button disabled={loading}>
-                {loading ? "Verifying..." : "Verify PDF"}
-              </button>
-            </form>
-
-            {verifyResult && (
-              <pre>{JSON.stringify(verifyResult, null, 2)}</pre>
-            )}
-          </section>
-        </>
+      {analytics && (
+        <div className="analytics-grid">
+          <div>
+            <h3>Total Exams</h3>
+            <p>{analytics.totalExams || 0}</p>
+          </div>
+          <div>
+            <h3>Total Logs</h3>
+            <p>{analytics.totalLogs || 0}</p>
+          </div>
+          <div>
+            <h3>Uploads</h3>
+            <p>{analytics.uploadSuccess || 0}</p>
+          </div>
+          <div>
+            <h3>Views</h3>
+            <p>{analytics.adminViews || 0}</p>
+          </div>
+        </div>
       )}
 
-      <section className="card">
-        <h2>All Exam Papers</h2>
+      {user?.role === "admin" && (
+        <section className="panel">
+          <h2>Upload Exam Paper</h2>
 
-        <button onClick={fetchExams}>Refresh Exams</button>
+          <form className="upload-grid" onSubmit={handleUpload}>
+            <input
+              placeholder="Subject Name"
+              value={uploadForm.subjectName}
+              onChange={(e) =>
+                setUploadForm({ ...uploadForm, subjectName: e.target.value })
+              }
+            />
 
-        <div className="table-wrapper">
+            <input
+              placeholder="Course Code"
+              value={uploadForm.courseCode}
+              onChange={(e) =>
+                setUploadForm({ ...uploadForm, courseCode: e.target.value })
+              }
+            />
+
+            <input
+              placeholder="Semester"
+              value={uploadForm.semester}
+              onChange={(e) =>
+                setUploadForm({ ...uploadForm, semester: e.target.value })
+              }
+            />
+
+            <input
+              placeholder="Exam Type"
+              value={uploadForm.examType}
+              onChange={(e) =>
+                setUploadForm({ ...uploadForm, examType: e.target.value })
+              }
+            />
+
+            <input
+              placeholder="Faculty Name"
+              value={uploadForm.facultyName}
+              onChange={(e) =>
+                setUploadForm({ ...uploadForm, facultyName: e.target.value })
+              }
+            />
+
+            <input
+              placeholder="Duration"
+              value={uploadForm.duration}
+              onChange={(e) =>
+                setUploadForm({ ...uploadForm, duration: e.target.value })
+              }
+            />
+
+            <input
+              type="datetime-local"
+              value={uploadForm.examStartTime}
+              onChange={(e) =>
+                setUploadForm({ ...uploadForm, examStartTime: e.target.value })
+              }
+            />
+
+            <input
+              type="datetime-local"
+              value={uploadForm.examEndTime}
+              onChange={(e) =>
+                setUploadForm({ ...uploadForm, examEndTime: e.target.value })
+              }
+            />
+
+            <input
+              type="file"
+              accept="application/pdf"
+              onChange={(e) =>
+                setUploadForm({ ...uploadForm, file: e.target.files[0] })
+              }
+            />
+
+            <button className="primary-btn" type="submit">
+              Upload to Blockchain
+            </button>
+          </form>
+        </section>
+      )}
+
+      <section className="panel">
+        <div className="section-title">
+          <h2>All Exam Papers</h2>
+          <button className="primary-btn" onClick={fetchExams}>
+            Refresh Exams
+          </button>
+        </div>
+
+        <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -825,13 +630,9 @@ if (uploadForm.examEndTime) {
                 <th>Semester</th>
                 <th>Exam Type</th>
                 <th>Faculty</th>
-                <th>Duration</th>
-                <th>View Limit</th>
-                <th>Student Download</th>
                 <th>Blockchain ID</th>
                 <th>Start Time</th>
                 <th>End Time</th>
-                <th>Status</th>
                 <th>Hash</th>
                 <th>Tx Hash</th>
                 <th>Actions</th>
@@ -841,68 +642,42 @@ if (uploadForm.examEndTime) {
             <tbody>
               {exams.length === 0 ? (
                 <tr>
-                  <td colSpan="15">No exam papers found</td>
+                  <td colSpan="11">No exam papers found</td>
                 </tr>
               ) : (
-                exams.map((exam, index) => (
-                  <tr key={getId(exam) || index}>
+                exams.map((exam) => (
+                  <tr key={exam._id || exam.id}>
                     <td>{exam.subjectName || exam.title || "-"}</td>
                     <td>{exam.courseCode || "-"}</td>
                     <td>{exam.semester || "-"}</td>
                     <td>{exam.examType || "-"}</td>
                     <td>{exam.facultyName || "-"}</td>
-                    <td>{exam.duration || "-"}</td>
-                    <td>{exam.downloadLimit || 1} time</td>
-                    <td>{role === "student" ? "Disabled" : "Admin Only"}</td>
-
-                    <td>
-                      {exam.blockchainPaperId || "-"}
-                      <br />
-                      <button onClick={() => copyText(exam.blockchainPaperId)}>
-                        Copy
-                      </button>
-                    </td>
-
+                    <td>{exam.blockchainPaperId || "-"}</td>
                     <td>{formatDate(exam.examStartTime)}</td>
                     <td>{formatDate(exam.examEndTime)}</td>
-
+                    <td>{exam.hash ? exam.hash.slice(0, 12) + "..." : "-"}</td>
                     <td>
-                      <span className="status-open">Open</span>
+                      {exam.blockchainTxHash
+                        ? exam.blockchainTxHash.slice(0, 12) + "..."
+                        : "-"}
                     </td>
-
                     <td>
-                      {shortText(exam.hash, 22)}
-                      <br />
-                      <button onClick={() => copyText(exam.hash)}>Copy</button>
-                    </td>
-
-                    <td>
-                      {shortText(exam.blockchainTxHash, 22)}
-                      <br />
-                      <button onClick={() => copyText(exam.blockchainTxHash)}>
-                        Copy
-                      </button>
-                    </td>
-
-                    <td>
-                      <button onClick={() => viewPdf(exam)}>
-                        {role === "student" ? "View Paper" : "View PDF"}
+                      <button
+                        className="small-btn"
+                        onClick={() => viewPdf(exam._id || exam.id)}
+                      >
+                        View
                       </button>
 
-                      {role === "admin" && (
-                        <button onClick={() => downloadPdf(exam)}>
+                      {user?.role === "admin" && (
+                        <button
+                          className="small-btn"
+                          onClick={() =>
+                            downloadPdf(exam._id || exam.id, exam.filename)
+                          }
+                        >
                           Download
                         </button>
-                      )}
-
-                      {exam.blockchainTxHash && (
-                        <a
-                          href={`https://sepolia.etherscan.io/tx/${exam.blockchainTxHash}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          Etherscan
-                        </a>
                       )}
                     </td>
                   </tr>
@@ -913,75 +688,66 @@ if (uploadForm.examEndTime) {
         </div>
       </section>
 
-      {role === "admin" && (
-        <>
-          {analytics && (
-            <section className="card">
-              <h2>Analytics</h2>
+      <section className="panel">
+        <h2>Verify PDF</h2>
 
-              <div className="analytics-grid">
-                {Object.entries(analytics).map(([key, value]) => (
-                  <div className="analytics-box" key={key}>
-                    <h3>{String(value)}</h3>
-                    <p>{key}</p>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+        <form className="verify-row" onSubmit={handleVerify}>
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={(e) => setVerifyFile(e.target.files[0])}
+          />
 
-          <section className="card">
-            <h2>Access Logs</h2>
+          <button className="primary-btn" type="submit">
+            Verify PDF
+          </button>
+        </form>
+      </section>
 
-            <button onClick={fetchLogs}>Refresh Logs</button>
+      <section className="panel">
+        <div className="section-title">
+          <h2>Access Logs</h2>
+          <button className="primary-btn" onClick={fetchLogs}>
+            Refresh Logs
+          </button>
+        </div>
 
-            <div className="table-wrapper">
-              <table>
-                <thead>
-                  <tr>
-                    <th>User</th>
-                    <th>Role</th>
-                    <th>Action</th>
-                    <th>File</th>
-                    <th>Status</th>
-                    <th>IP</th>
-                    <th>Time</th>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Role</th>
+                <th>Action</th>
+                <th>File</th>
+                <th>Status</th>
+                <th>IP</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {logs.length === 0 ? (
+                <tr>
+                  <td colSpan="7">No logs found</td>
+                </tr>
+              ) : (
+                logs.map((log, index) => (
+                  <tr key={log._id || index}>
+                    <td>{log.userEmail || log.email || "-"}</td>
+                    <td>{log.role || "-"}</td>
+                    <td>{log.action || "-"}</td>
+                    <td>{log.filename || log.fileName || "-"}</td>
+                    <td>{log.status || "-"}</td>
+                    <td>{log.ipAddress || log.ip || "-"}</td>
+                    <td>{formatDate(log.timestamp || log.createdAt)}</td>
                   </tr>
-                </thead>
-
-                <tbody>
-                  {logs.length === 0 ? (
-                    <tr>
-                      <td colSpan="7">No logs found</td>
-                    </tr>
-                  ) : (
-                    logs.map((log, index) => (
-                      <tr key={log._id || index}>
-                        <td>
-                          {log.userEmail ||
-                            log.email ||
-                            log.userId ||
-                            "-"}
-                        </td>
-                        <td>{log.role || "-"}</td>
-                        <td>{log.action || "-"}</td>
-                        <td>{log.filename || "-"}</td>
-                        <td>{log.status || "-"}</td>
-                        <td>{log.ipAddress || log.ip || "-"}</td>
-                        <td>
-                          {formatDate(
-                            log.createdAt || log.timestamp || log.time
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
-      )}
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }
